@@ -1,57 +1,81 @@
 # Smart Research Assistant
 
-A ReAct-style agent that uses tools to conduct research and provide well-structured summaries with citations.
+A research assistant that uses AI to search, summarize, and extract citations from research materials. Built with ReAct-style reasoning for intelligent tool selection and information processing.
 
 ## Features
 
 - ReAct-style reasoning and action selection
-- Document search and retrieval
-- Information extraction and summarization
-- Citation management
-- Chain-of-thought reasoning
+- Web search using Bing
+- Text summarization
+- Citation extraction
+- Interactive Gradio interface
+- Memory of previous interactions
 
-## Setup
+## Technical Details
 
-1. Install dependencies:
+The assistant uses a ReAct (Reasoning and Acting) framework to:
+1. Reason about what information is needed
+2. Select appropriate tools (search, summarize, citations)
+3. Process and combine information
+4. Generate well-structured answers with citations
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/nykznykz/smart_research_assistant.git
+cd smart_research_assistant
+```
+
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Install Playwright browsers:
+3. Install Playwright browsers:
 ```bash
 playwright install
 ```
 
-3. Set up environment variables:
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
-
 ## Usage
 
-```python
-from src.agent import ResearchAssistant
+### Command Line Interface
 
-agent = ResearchAssistant()
-response = agent.ask("What are the top 3 threats to AI alignment raised in recent research?")
-print(response)
+Run the example script:
+```bash
+python -m src.example
 ```
 
-## Project Structure
+### Web Interface
 
+Launch the Gradio interface:
+```bash
+python -m src.gradio_interface
 ```
-smart_research_assistant/
-├── src/                # Source code
-├── tests/             # Test cases
-├── data/              # Data and document storage
-├── config/            # Configuration files
-├── requirements.txt   # Project dependencies
-└── README.md         # Project documentation
-```
+
+This will start a web server and open the interface in your default browser. You can:
+- Enter research questions
+- Get AI-generated answers with citations
+- Try example questions
+- Share the interface with others via URL
 
 ## Development
 
-- Run tests: `pytest tests/`
-- Format code: `black src/`
-- Type checking: `mypy src/` 
+### Testing
+
+Run the test suite:
+```bash
+pytest
+```
+
+### Project Structure
+
+- `src/agent.py`: Main agent implementation with ReAct-style reasoning
+- `src/tools.py`: Tool implementations (search, summarize, citations)
+- `src/gradio_interface.py`: Web interface
+- `tests/`: Test files
+- `requirements.txt`: Python dependencies
+
+## License
+
+MIT License 
