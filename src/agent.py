@@ -1,9 +1,12 @@
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_community.llms import Ollama
-from tools import SearchTool, SummarizerTool, CitationTool
+from langchain_core.runnables import RunnableSequence
+from langchain_core.output_parsers import JsonOutputParser
+from langchain.memory import ConversationBufferMemory
+from .tools import SearchTool, SummarizerTool, CitationTool
 import json
 import re
 import logging
@@ -18,18 +21,22 @@ class Tool(BaseModel):
     parameters: Dict[str, Any]
     
 class ResearchAssistant:
+    """Agent that uses tools to answer research questions."""
+    
     def __init__(self):
         self.llm = Ollama(model="gemma3:4b")
-        self.tools: List[Tool] = []
-        self.memory: List[Dict[str, Any]] = []
-        
-        # Initialize tool implementations
+        # Initialize tool instances
         self.search_tool = SearchTool()
         self.summarizer_tool = SummarizerTool()
         self.citation_tool = CitationTool()
-        
-        # Initialize tools
-        self._initialize_tools()
+        # Store tools in a list with their metadata
+        self.tools = [
+            {"name": "search", "instance": self.search_tool},
+            {"name": "summarize", "instance": self.summarizer_tool},
+            {"name": "extract_citations", "instance": self.citation_tool}
+        ]
+        self.memory = ConversationBufferMemory()
+        self.reasoning_chain = None
         
     def _initialize_tools(self):
         """Initialize the available tools for the agent."""
@@ -84,23 +91,20 @@ class ResearchAssistant:
             {{"text": "text with citations"}}
             
             Important rules:
-            1. After gathering information, use the summarize tool to create a concise summary
-            2. After summarizing, provide a Final Answer that directly addresses the question
-            3. Do not continue searching after you have enough information to answer the question
-            4. Use the extract_citations tool to ensure your answer includes proper citations
+            1. Use the exact tool names: 'search', 'summarize', or 'extract_citations'
+            2. After gathering information, use the summarize tool to create a concise summary
+            3. After summarizing, provide a Final Answer that directly addresses the question
+            4. Do not continue searching after you have enough information to answer the question
+            5. Use the extract_citations tool to ensure your answer includes proper citations
             """
         )
     
-    def _process_tool_result(self, tool_name: str, result: Any) -> str:
-        """Process the result from a tool execution."""
-        # Add to memory
-        self.memory.append({
-            "tool": tool_name,
-            "result": result
-        })
-        
-        # Return formatted result
-        return f"Tool {tool_name} returned: {result}"
+    def _process_tool_result(self, action: str, result: Any) -> None:
+        """Process the result of a tool execution."""
+        self.memory.save_context(
+            {"input": f"Action: {action}"},
+            {"output": str(result)}
+        )
     
     def _parse_action_input(self, action_input: str) -> Dict[str, Any]:
         """Parse the action input into a dictionary of parameters."""
@@ -165,8 +169,8 @@ class ResearchAssistant:
                     return action_input
                 
                 # Validate the action is a defined tool
-                if action not in [tool.name for tool in self.tools]:
-                    logger.warning(f"Invalid action: {action}. Available tools: {[tool.name for tool in self.tools]}")
+                if action not in [tool["name"] for tool in self.tools]:
+                    logger.warning(f"Invalid action: {action}. Available tools: {[tool['name'] for tool in self.tools]}")
                     continue
                 
                 # Execute the tool
@@ -239,40 +243,33 @@ class ResearchAssistant:
         
         return final_response
     
-    def _execute_tool(self, tool_name: str, action_input: str) -> Any:
+    def _execute_tool(self, tool_name: str, params: str) -> Any:
         """Execute a tool with the given parameters."""
         try:
-            # Parse the parameters
-            params = self._parse_action_input(action_input)
-            logger.info(f"Parsed parameters: {params}")
+            # Parse parameters
+            if isinstance(params, str):
+                try:
+                    params = json.loads(params)
+                except json.JSONDecodeError:
+                    # For invalid JSON, raise ValueError
+                    raise ValueError(f"Invalid JSON parameters: {params}")
             
-            # Validate required parameters
-            required_params = self.tools[next(i for i, t in enumerate(self.tools) if t.name == tool_name)].parameters
-            missing_params = [p for p in required_params if p not in params]
-            if missing_params:
-                raise ValueError(f"Missing required parameters for {tool_name}: {', '.join(missing_params)}")
+            # Find the tool instance
+            tool_info = next((t for t in self.tools if t["name"] == tool_name), None)
+            if not tool_info:
+                raise ValueError(f"Tool {tool_name} not found")
             
-            # Execute the appropriate tool
+            tool = tool_info["instance"]
+            
+            # Execute the tool with correct parameters
             if tool_name == "search":
-                # Try document search first, fall back to web search
-                logger.info("Attempting document search...")
-                results = self.search_tool.search_documents(**params)
-                if not results:
-                    logger.info("No document results, falling back to web search...")
-                    results = self.search_tool.web_search(**params)
-                return results
-                
+                # For search, we need to handle the async operation
+                return tool.search(query=params.get("query", ""), max_results=params.get("max_results", 3))
             elif tool_name == "summarize":
-                logger.info("Summarizing text...")
-                return self.summarizer_tool.summarize(**params)
-                
+                return tool.summarize(text=params.get("text", ""), max_length=params.get("max_length", 500))
             elif tool_name == "extract_citations":
-                logger.info("Extracting citations...")
-                return self.citation_tool.extract_citations(**params)
-                
-            else:
-                raise ValueError(f"Unknown tool: {tool_name}")
-                
+                return tool.extract_citations(text=params.get("text", ""))
+            
         except Exception as e:
             logger.error(f"Error executing tool {tool_name}: {str(e)}")
-            raise RuntimeError(f"Error executing tool {tool_name}: {str(e)}") 
+            raise 

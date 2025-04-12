@@ -2,62 +2,75 @@ from typing import List, Dict, Any
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
+import asyncio
 import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 class SearchTool:
-    """Tool for searching documents and the web."""
+    """Tool for searching documents and web content."""
     
     def __init__(self):
         self.llm = Ollama(model="gemma3:4b")
         self.browser = None
         self.context = None
+        self.page = None
     
-    def search_documents(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
-        """Search the document repository."""
-        # TODO: Implement document search
-        return []
-    
-    def web_search(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
-        """Search the web using Bing."""
+    async def _init_browser(self):
+        """Initialize the browser if not already initialized."""
         if not self.browser:
-            self.browser = sync_playwright().start()
-            self.context = self.browser.chromium.launch(
+            playwright = await async_playwright().start()
+            self.browser = await playwright.chromium.launch(
                 headless=True,
                 args=[
                     '--disable-blink-features=AutomationControlled',
                     '--disable-features=IsolateOrigins,site-per-process',
                     '--disable-site-isolation-trials'
                 ]
-            ).new_context(
+            )
+            self.context = await self.browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
             )
-        
+            self.page = await self.context.new_page()
+    
+    async def _close_browser(self):
+        """Close the browser and cleanup resources."""
+        if self.context:
+            await self.context.close()
+        if self.browser:
+            await self.browser.close()
+        self.browser = None
+        self.context = None
+        self.page = None
+    
+    async def web_search(self, query: str, max_results: int = 3) -> List[Dict[str, str]]:
+        """Perform a web search using Bing."""
         try:
-            page = self.context.new_page()
-            page.goto(f"https://www.bing.com/search?q={query}")
+            await self._init_browser()
+            
+            # Navigate to Bing
+            await self.page.goto(f"https://www.bing.com/search?q={query}")
             
             # Wait for search results to load
-            page.wait_for_selector("ol#b_results", timeout=10000)
+            await self.page.wait_for_selector("ol#b_results", timeout=10000)
             
             # Extract search results
             results = []
-            result_elements = page.query_selector_all("ol#b_results > li.b_algo")
+            result_elements = await self.page.query_selector_all("ol#b_results > li.b_algo")
             
             for element in result_elements[:max_results]:
                 try:
-                    title_element = element.query_selector("h2")
-                    link_element = element.query_selector("h2 a")
-                    snippet_element = element.query_selector("div.b_caption p")
+                    title_element = await element.query_selector("h2")
+                    link_element = await element.query_selector("h2 a")
+                    snippet_element = await element.query_selector("div.b_caption p")
                     
                     if title_element and link_element and snippet_element:
-                        title = title_element.inner_text()
-                        url = link_element.get_attribute("href")
-                        snippet = snippet_element.inner_text()
+                        title = await title_element.inner_text()
+                        url = await link_element.get_attribute("href")
+                        snippet = await snippet_element.inner_text()
                         
                         results.append({
                             "title": title,
@@ -71,19 +84,19 @@ class SearchTool:
             return results
             
         except Exception as e:
-            logger.error(f"Error during Bing search: {str(e)}")
+            logger.error(f"Error in web search: {str(e)}")
             return []
-            
         finally:
-            if page:
-                page.close()
+            await self._close_browser()
     
-    def __del__(self):
-        """Clean up browser resources."""
-        if self.context:
-            self.context.close()
-        if self.browser:
-            self.browser.stop()
+    def search(self, query: str, max_results: int = 3) -> List[Dict[str, str]]:
+        """Synchronous wrapper for web search."""
+        return asyncio.run(self.web_search(query, max_results))
+    
+    def search_documents(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
+        """Search the document repository."""
+        # TODO: Implement document search
+        return []
 
 class SummarizerTool:
     def __init__(self):
