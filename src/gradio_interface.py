@@ -39,7 +39,8 @@ interface = gr.Interface(
         "What is the current state of quantum computing?",
         "How does climate change affect biodiversity?"
     ],
-    theme=gr.themes.Soft()
+    theme=gr.themes.Soft(),
+    flagging_mode="never"  # Disable flagging functionality
 )
 
 if __name__ == "__main__":
