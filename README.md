@@ -1,5 +1,9 @@
 # Smart Research Assistant
 
+<div align="center">
+  <img src="assets/smart_research_assistant.png" alt="Smart Research Assistant Banner" width="800"/>
+</div>
+
 A research assistant that uses AI to search, summarize, and extract citations from research materials. Built with ReAct-style reasoning for intelligent tool selection and information processing.
 
 ## Features
