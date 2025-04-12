@@ -1,7 +1,7 @@
 from typing import List, Dict, Any
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OllamaEmbeddings
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 from playwright.async_api import async_playwright
 import asyncio
 import json
@@ -13,7 +13,7 @@ class SearchTool:
     """Tool for searching documents and web content."""
     
     def __init__(self):
-        self.llm = Ollama(model="gemma3:4b")
+        self.llm = OllamaLLM(model="gemma3:4b")
         self.browser = None
         self.context = None
         self.page = None
@@ -100,7 +100,7 @@ class SearchTool:
 
 class SummarizerTool:
     def __init__(self):
-        self.llm = Ollama(model="gemma3:4b")
+        self.llm = OllamaLLM(model="gemma3:4b")
         
     def summarize(self, text: str, max_length: int = 500) -> str:
         """Summarize the given text."""
@@ -116,7 +116,7 @@ class SummarizerTool:
 
 class CitationTool:
     def __init__(self):
-        self.llm = Ollama(model="gemma3:4b")
+        self.llm = OllamaLLM(model="gemma3:4b")
         
     def extract_citations(self, text: str) -> List[Dict[str, str]]:
         """Extract citations from the given text."""

@@ -2,10 +2,10 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from langchain.chains import LLMChain
 from langchain_core.prompts import PromptTemplate
-from langchain_community.llms import Ollama
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_ollama import OllamaLLM
 from langchain_core.runnables import RunnableSequence
 from langchain_core.output_parsers import JsonOutputParser
-from langchain.memory import ConversationBufferMemory
 from .tools import SearchTool, SummarizerTool, CitationTool
 import json
 import re
@@ -21,21 +21,35 @@ class Tool(BaseModel):
     parameters: Dict[str, Any]
     
 class ResearchAssistant:
-    """Agent that uses tools to answer research questions."""
+    """A research assistant that can search, summarize, and extract citations."""
     
     def __init__(self):
-        self.llm = Ollama(model="gemma3:4b")
-        # Initialize tool instances
+        self.llm = OllamaLLM(model="gemma3:4b")
+        self.memory = ChatMessageHistory()
+        
+        # Initialize tools
         self.search_tool = SearchTool()
         self.summarizer_tool = SummarizerTool()
         self.citation_tool = CitationTool()
-        # Store tools in a list with their metadata
+        
+        # Define available tools
         self.tools = [
-            {"name": "search", "instance": self.search_tool},
-            {"name": "summarize", "instance": self.summarizer_tool},
-            {"name": "extract_citations", "instance": self.citation_tool}
+            {
+                "name": "search",
+                "instance": self.search_tool,
+                "description": "Search for information on a topic"
+            },
+            {
+                "name": "summarize",
+                "instance": self.summarizer_tool,
+                "description": "Summarize text"
+            },
+            {
+                "name": "extract_citations",
+                "instance": self.citation_tool,
+                "description": "Extract citations from text"
+            }
         ]
-        self.memory = ConversationBufferMemory()
         self.reasoning_chain = None
         
     def _initialize_tools(self):
@@ -59,16 +73,16 @@ class ResearchAssistant:
         ]
     
     def _get_reasoning_prompt(self) -> PromptTemplate:
-        """Create the ReAct-style reasoning prompt."""
+        """Get the reasoning prompt template."""
         return PromptTemplate(
-            input_variables=["question", "tools", "memory"],
+            input_variables=["question", "tools", "chat_history"],
             template="""
-            You are a research assistant that uses tools to answer questions.
+            You are a research assistant that helps answer questions by using available tools.
             You have access to the following tools:
             {tools}
             
-            Previous steps in memory:
-            {memory}
+            Previous conversation history:
+            {chat_history}
             
             Current question: {question}
             
@@ -99,12 +113,11 @@ class ResearchAssistant:
             """
         )
     
-    def _process_tool_result(self, action: str, result: Any) -> None:
+    def _process_tool_result(self, tool_name: str, result: Any) -> None:
         """Process the result of a tool execution."""
-        self.memory.save_context(
-            {"input": f"Action: {action}"},
-            {"output": str(result)}
-        )
+        # Add the tool result to memory
+        self.memory.add_user_message(f"Used {tool_name} tool")
+        self.memory.add_ai_message(str(result))
     
     def _parse_action_input(self, action_input: str) -> Dict[str, Any]:
         """Parse the action input into a dictionary of parameters."""
@@ -126,119 +139,69 @@ class ResearchAssistant:
         return params
     
     def ask(self, question: str) -> str:
-        """Process a research question using ReAct-style reasoning."""
+        """Ask a question and get an answer."""
         logger.info(f"Starting to process question: {question}")
         
-        # Initialize the reasoning chain
-        reasoning_chain = LLMChain(
-            llm=self.llm,
-            prompt=self._get_reasoning_prompt()
-        )
+        # Get the reasoning prompt
+        prompt = self._get_reasoning_prompt()
         
-        # Start the reasoning loop
-        iteration = 0
-        max_iterations = 3  # Limit to 3 search iterations
-        search_results = []  # Store all search results
+        # Format the chat history for the prompt
+        chat_history = "\n".join([f"{msg.type}: {msg.content}" for msg in self.memory.messages])
         
-        while iteration < max_iterations:
-            iteration += 1
-            logger.info(f"\nIteration {iteration}")
-            
-            # Get next action from LLM
-            logger.info("Getting next action from LLM...")
-            response = reasoning_chain.run(
+        # Get the next action from the LLM
+        logger.info("Getting next action from LLM...")
+        response = self.llm(
+            prompt.format(
                 question=question,
                 tools=self.tools,
-                memory=self.memory
+                chat_history=chat_history
             )
-            logger.info(f"LLM Response:\n{response}")
+        )
+        logger.info(f"LLM Response:\n{response}")
+        
+        # Parse the response
+        thought = response.split("Action:")[0].strip().replace("Thought:", "").strip()
+        action = response.split("Action:")[1].split("Action Input:")[0].strip()
+        action_input = response.split("Action Input:")[1].strip()
+        
+        logger.info(f"Thought: {thought}")
+        logger.info(f"Action: {action}")
+        logger.info(f"Action Input: {action_input}")
+        
+        # Execute the tool
+        logger.info(f"Executing tool: {action}")
+        result = self._execute_tool(action, action_input)
+        logger.info(f"Tool result: {result}")
+        
+        # Process the result
+        self._process_tool_result(action, result)
+        
+        # Get the final answer
+        final_prompt = PromptTemplate(
+            input_variables=["question", "tools", "chat_history", "summary"],
+            template="""
+            Based on the following summary of research findings, please provide a comprehensive answer to the question.
             
-            # Parse the response
-            try:
-                thought = response.split("Action:")[0].strip()
-                action = response.split("Action:")[1].split("Action Input:")[0].strip()
-                action_input = response.split("Action Input:")[1].strip()
-                
-                logger.info(f"Thought: {thought}")
-                logger.info(f"Action: {action}")
-                logger.info(f"Action Input: {action_input}")
-                
-                # Execute the action
-                if action.lower() in ["final answer", "answer the question"]:
-                    logger.info("Received Final Answer")
-                    return action_input
-                
-                # Validate the action is a defined tool
-                if action not in [tool["name"] for tool in self.tools]:
-                    logger.warning(f"Invalid action: {action}. Available tools: {[tool['name'] for tool in self.tools]}")
-                    continue
-                
-                # Execute the tool
-                logger.info(f"Executing tool: {action}")
-                result = self._execute_tool(action, action_input)
-                logger.info(f"Tool result: {result}")
-                
-                # Store search results
-                if action == "search" and result:
-                    search_results.extend(result)
-                
-                # Process the result
-                self._process_tool_result(action, result)
-                
-            except Exception as e:
-                logger.error(f"Error processing LLM response: {str(e)}")
-                logger.error(f"Full response: {response}")
-                continue  # Continue to next iteration instead of raising
+            Question: {question}
+            
+            Research findings:
+            {summary}
+            
+            Previous conversation history:
+            {chat_history}
+            
+            Please provide a clear, concise answer that directly addresses the question.
+            Include relevant citations and sources where appropriate.
+            """
+        )
         
-        # After max iterations, summarize the findings
-        logger.info("Reached maximum iterations, summarizing findings...")
-        
-        if not search_results:
-            return "I couldn't find any relevant information to answer your question."
-        
-        # Create a summary of all search results
-        search_summary = "\n".join([
-            f"Title: {result['title']}\nSnippet: {result['snippet']}\nURL: {result['url']}\n"
-            for result in search_results
-        ])
-        
-        # First, use the summarizer tool to create a concise summary
-        logger.info("Creating summary of search results...")
-        try:
-            summary = self._execute_tool("summarize", json.dumps({
-                "text": search_summary,
-                "max_length": 1000
-            }))
-        except Exception as e:
-            logger.error(f"Error creating summary: {str(e)}")
-            summary = search_summary  # Fall back to raw search results
-        
-        # Then, ask the LLM to provide a final answer based on the summary
-        logger.info("Generating final answer...")
-        final_response = reasoning_chain.run(
-            question=question,
-            tools=self.tools,
-            memory=self.memory,
-            prompt=PromptTemplate(
-                input_variables=["question", "tools", "memory", "summary"],
-                template="""
-                Based on the following summary of research findings, please provide a comprehensive answer to the question.
-                
-                Question: {question}
-                
-                Summary of Research:
-                {summary}
-                
-                Please provide a well-structured answer that:
-                1. Directly addresses the question
-                2. Provides key findings from the research
-                3. Includes relevant citations or sources
-                4. Is clear and concise
-                
-                Final Answer:
-                """
-            ),
-            summary=summary
+        final_response = self.llm(
+            final_prompt.format(
+                question=question,
+                tools=self.tools,
+                chat_history=chat_history,
+                summary=result
+            )
         )
         
         return final_response

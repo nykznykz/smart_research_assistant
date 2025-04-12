@@ -64,5 +64,8 @@ def test_process_tool_result():
     agent = ResearchAssistant()
     agent._process_tool_result("search", "test result")
     # Verify memory was updated
-    memory_vars = agent.memory.load_memory_variables({})
-    assert "history" in memory_vars 
+    assert len(agent.memory.messages) == 2  # One user message and one AI message
+    assert agent.memory.messages[0].type == "human"
+    assert agent.memory.messages[1].type == "ai"
+    assert "Used search tool" in agent.memory.messages[0].content
+    assert "test result" in agent.memory.messages[1].content 
