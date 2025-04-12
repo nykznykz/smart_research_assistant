@@ -112,7 +112,7 @@ class SummarizerTool:
         Summary:
         """
         
-        return self.llm(prompt)
+        return self.llm.invoke(prompt)
 
 class CitationTool:
     def __init__(self):
@@ -129,7 +129,7 @@ class CitationTool:
         Citations:
         """
         
-        response = self.llm(prompt)
+        response = self.llm.invoke(prompt)
         try:
             return json.loads(response)
         except json.JSONDecodeError:

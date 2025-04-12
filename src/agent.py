@@ -150,7 +150,7 @@ class ResearchAssistant:
         
         # Get the next action from the LLM
         logger.info("Getting next action from LLM...")
-        response = self.llm(
+        response = self.llm.invoke(
             prompt.format(
                 question=question,
                 tools=self.tools,
@@ -195,7 +195,7 @@ class ResearchAssistant:
             """
         )
         
-        final_response = self.llm(
+        final_response = self.llm.invoke(
             final_prompt.format(
                 question=question,
                 tools=self.tools,
